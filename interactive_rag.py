@@ -1,12 +1,10 @@
 from __future__ import annotations
 import asyncio, os, json, time
-from dataclasses import dataclass
-
 import chromadb
 from sentence_transformers import SentenceTransformer, CrossEncoder
-from sentence_transformers.util import cos_sim
-import numpy as np
-import httpx                   # асинхронная альтернатива requests
+import httpx
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_gigachat.chat_models import GigaChat
 
 DB_DIR        = "data/chroma"
 COLLECTION    = "pdf_documents"
@@ -22,6 +20,12 @@ collection    = client.get_collection(COLLECTION)
 
 embedder      = SentenceTransformer(DENSE_MODEL, device="cuda")
 reranker      = CrossEncoder(RERANK_MODEL, device="cuda")
+
+use_gigachat = True
+if use_gigachat:
+    giga_api = os.environ.get('Giga_api')
+    giga = GigaChat(credentials=giga_api,
+                    verify_ssl_certs=False)
 
 # ---------- вспомогательные функции ----------
 
@@ -40,7 +44,7 @@ async def ollama_async(prompt: str, stream: bool = True) -> str:
             r.raise_for_status()
             return r.json()["response"].strip()
 
-def dense_retrieve(query: str, k: int) -> list[dict]:
+def dense_retrieve(query: str, k: int, col = collection) -> list[dict]:
     q_emb = embedder.encode(query, normalize_embeddings=True)
     res = collection.query(q_emb, n_results=k, include=["documents", "metadatas"])
     docs, metas = res["documents"][0], res["metadatas"][0]
@@ -61,9 +65,42 @@ def shrink(passages: list[dict], max_tokens: int) -> str:
         tokens += t_est
     return "\n\n".join(out)
 
+def gigachat_query(prompt: str) -> str:
+    response = giga.generate(prompt)
+    return response.choices[0].message.content
+
 # ---------- событийный цикл ----------
 
-async def handle_query(question: str) -> tuple[str, list[dict], float]:
+def handle_multiple_queries(queries: list[str], documents: list[collection]) \
+        -> list[tuple[str, list[str]]]:
+    if len(queries) != len(documents):
+        raise ValueError("queries and documents must have same length")
+    messages = []
+    ctxs = []
+    for i in range(len(queries)):
+        query = queries[i]
+        col = documents[i]
+        candidates = dense_retrieve(query, N_RETRIEVE, col)
+        top_passages = rerank(query, candidates, N_RERANK)
+        ctx = shrink(top_passages, CTX_MAX_TOK)
+        prompt = (
+            "You are an assistant that answers user queries using only the provided documents. For each claim you make, "
+            "cite the exact source."
+            "If information is not found in the documents, reply with “I don’t know.” Present answers clearly and concisely. "
+            "Do not generate any information not supported by the sources. If sources conflict, "
+            "mention the discrepancy and your confidence level.\n\n"
+            f"### Documents:\n{ctx}\n\n"
+            f"### Question:\n{query}\n\n### Your answer:"
+        )
+        messages.append(prompt)
+        ctxs.append(ctx)
+
+    responses = giga.generate(messages)
+    answers = [response.choices[0].message.content for response in responses]
+
+    return [(answers[i], ctxs[i]) for i in range(len(ctxs))]
+
+async def handle_query(question: str, use_giga: bool) -> tuple[str, list[dict], float]:
     start = time.perf_counter()
 
     candidates = dense_retrieve(question, N_RETRIEVE)
@@ -81,7 +118,10 @@ async def handle_query(question: str) -> tuple[str, list[dict], float]:
         f"### Question:\n{question}\n\n### Your answer:"
     )
 
-    answer = await ollama_async(prompt, stream=True)
+    if use_giga:
+        answer = gigachat_query(prompt)
+    else:
+        answer = await ollama_async(prompt, stream=True)
     elapsed = time.perf_counter() - start
 
     return answer, top_passages, elapsed

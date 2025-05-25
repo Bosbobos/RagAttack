@@ -1,17 +1,18 @@
-import asyncio
-import random
-import string
 from sentence_transformers import SentenceTransformer
 from sentence_transformers.util import cos_sim
-import numpy as np
 import chromadb
+import random
+import numpy as np
 import interactive_rag
+from copy import deepcopy
 
 # Параметры атаки
 N_TOKENS = 50  # длина d̃j
 BATCH_SIZE = 16  # сколько кандидатов на шаг
 MAX_ITERS = 500  # максимум итераций
-STOP_AFTER_NO_IMPROVE = 100  # стоп если нет улучшений
+STOP_AFTER_NO_IMPROVE = 50  # стоп если нет улучшений
+SIM_DELTA = 1e-6 # На сколько должна поменяться близость к таргету, чтобы мы учли изменение
+TARGET_SIM = 0.95 # Насколько близкий ответ считаем достаточно хорошим, чтобы закончить поиск
 BLOCKER_ID = "blocker_doc"  # фиксированный id для блокера
 
 # Целевая фраза отказа (ее будем оптимизировать)
@@ -21,110 +22,115 @@ TARGET_REFUSAL = "I don’t know."
 TOKEN_VOCAB = list("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ,.-?!")
 
 # Для эмбеддинга и оценки сходства целевого отказа
-similarity_embedder = SentenceTransformer("intfloat/multilingual-e5-base", device="cuda")
-target_emb = similarity_embedder.encode(TARGET_REFUSAL, convert_to_numpy=True)
-
-DB_DIR = "data/chroma"
 embedder = SentenceTransformer("intfloat/multilingual-e5-base", device="cuda")
+target_emb = embedder.encode(TARGET_REFUSAL, convert_to_numpy=True)
+
+# Для работы с RAG
+DB_DIR = "data/chroma"
 client = chromadb.PersistentClient(path=DB_DIR)
 collection = client.get_or_create_collection(name="pdf_documents")
 
 def random_token():
     return random.choice(TOKEN_VOCAB)
 
-
 def embed_text(text: str) -> np.ndarray:
-    return similarity_embedder.encode(text, convert_to_numpy=True)
-
+    return embedder.encode(text, convert_to_numpy=True)
 
 def similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(cos_sim(a, b))
 
+def find_most_similar(candidates: list[str], target_embedding: np.ndarray) \
+    -> tuple[int, str, float]:
+    index = 0
+    min_dist = float("inf")
+    min_dist_text = 'Standard min dist text.'
+    for i in range(len(candidates)):
+        candidate = candidates[i]
+        emb = embed_text(candidate)
+        dist = similarity(target_embedding, emb)
+        if dist < min_dist:
+            index, min_dist, min_dist_text = i, dist, candidate
 
-async def insert_blocker_document(doc_text: str):
+    return index, min_dist_text, min_dist
+
+def find_best_result(candidates: list[str], target_embedding: np.ndarray) \
+    -> tuple[int, str, float]:
+    for i in range(len(candidates)):
+        candidate = candidates[i]
+        if TARGET_REFUSAL in candidate:
+            return i, candidate, 1
+
+    return find_most_similar(candidates, target_embedding)
+
+def build_blocker_text(d_r, d_j_list):
+    return d_r + "\n" + "".join(d_j_list)
+
+def insert_blocker_document(doc_text: str, col_name: str):
     emb = embedder.encode(doc_text, convert_to_numpy=True)
-    # Метаданные для блокера
     metadata = {"source": "blocker_document", "page": None}
-    collection.upsert(ids=[BLOCKER_ID], embeddings=[emb], metadatas=[metadata], documents=[doc_text])
+    col = client.get_or_create_collection(name=col_name)
+    col.upsert(ids=[BLOCKER_ID], embeddings=[emb], metadatas=[metadata], documents=[doc_text])
 
+def create_collection_copies(num: int):
+    copies = []
+    docs = collection.get(include=['documents', 'metadatas', 'ids'])
+    for i in range(num):
+        new_collection = client.get_or_create_collection(name=str(i))
+        new_collection.add(
+            documents=docs['documents'],
+            metadatas=docs['metadatas'],
+            ids=docs['ids']
+        )
+        copies.append(new_collection)
 
-async def test_blocker(query: str, blocker_text: str) -> tuple[str, float]:
-    """
-    Вставляем блокер, вызываем RAG, получаем ответ и считаем сходство с целевой фразой отказа
-    """
-    await insert_blocker_document(blocker_text)
-    answer, _, _ = await interactive_rag.handle_query(query)
-    answer_emb = embed_text(answer)
-    sim = similarity(answer_emb, target_emb)
-    return answer, sim
+    return copies
 
-
-async def attack(query: str):
+def attack(query: str, target_response: str):
     print(f"Starting attack on query:\n{query}\n")
+    target_emb = embed_text(target_response)
+    collections = create_collection_copies(BATCH_SIZE)
+    queries = [query]*BATCH_SIZE
 
     # Инициализация блокера: d̃r = query, d̃j = '!' * N_TOKENS
-    d_r = query
-    d_j = ["!"] * N_TOKENS
+    d_r = query # Первая часть документа - сам запрос, чтобы док-т выдавался при поиске
+    best_d_j = ["!"] * N_TOKENS
+    d_j = [["!"] * N_TOKENS for _ in range(BATCH_SIZE)]
 
-    best_d_j = d_j.copy()
-    best_sim = -1.0
-    no_improve_iters = 0
-
-    # Функция конкатенации
-    def build_blocker_text(d_r, d_j_list):
-        # Пробелы для читаемости
-        return d_r + " " + "".join(d_j_list)
-
-    for iteration in range(MAX_ITERS):
-        # Выбираем случайную позицию для изменения
+    last_sim, iter_with_no_change = 0, 0
+    for i in range(MAX_ITERS):
+        # Выбираем позицию и у каждого текста на этой позиции заменяем старый токен на какой-то случайный
         pos = random.randint(0, N_TOKENS - 1)
+        tokens = random.sample(TOKEN_VOCAB, BATCH_SIZE)
+        for j in range(BATCH_SIZE):
+            d_j[j][pos] = tokens[j]
+            blocker = build_blocker_text(d_r, d_j[j])
+            insert_blocker_document(blocker, str(j))
 
-        candidates = []
-        # Включаем текущий d_j как кандидат
-        candidates.append(best_d_j.copy())
+        answers, _ = interactive_rag.handle_multiple_queries(
+            queries, collections)
+        j, best_ans, best_ans_dist = find_best_result(answers, target_emb)
+        print(f'{i} Best answer: {best_ans} with sim {best_ans_dist}.')
+        best_d_j = deepcopy(d_j[j])
+        d_j = [deepcopy(best_d_j) for _ in range(BATCH_SIZE)]
 
-        # Генерируем BATCH_SIZE вариантов с заменой токена в pos
-        for _ in range(BATCH_SIZE):
-            new_d_j = best_d_j.copy()
-            new_d_j[pos] = random_token()
-            candidates.append(new_d_j)
-
-        # Проверяем кандидатов параллельно (или последовательно для простоты)
-        best_candidate = best_d_j
-        best_candidate_sim = best_sim
-
-        for candidate in candidates:
-            blocker_text = build_blocker_text(d_r, candidate)
-            answer, sim = await test_blocker(query, blocker_text)
-            print(f"Iter {iteration + 1} Pos {pos} Sim={sim:.4f} Answer snippet: {answer[:60]!r}")
-
-            if sim > best_candidate_sim:
-                best_candidate_sim = sim
-                best_candidate = candidate
-
-        # Если улучшение — обновляем
-        if best_candidate_sim > best_sim:
-            best_sim = best_candidate_sim
-            best_d_j = best_candidate
-            no_improve_iters = 0
-            print(f"** Improved similarity to {best_sim:.4f} at iter {iteration + 1}")
+        if abs(last_sim - best_ans_dist) < SIM_DELTA:
+            iter_with_no_change += 1
         else:
-            no_improve_iters += 1
+            iter_with_no_change = 0
 
-        # Условия остановки
-        if best_sim > 0.95:
+        last_sim = best_ans_dist
+        if best_ans_dist >= TARGET_SIM:
             print("Target refusal similarity reached.")
             break
-        if no_improve_iters >= STOP_AFTER_NO_IMPROVE:
+
+        if iter_with_no_change >= STOP_AFTER_NO_IMPROVE:
             print(f"No improvement for {STOP_AFTER_NO_IMPROVE} iters, stopping.")
             break
 
     final_text = build_blocker_text(d_r, best_d_j)
-    print(f"\nBest blocker document text:\n{final_text}\nSimilarity: {best_sim:.4f}")
+    print(f"\nBest blocker document text:\n{final_text}\nSimilarity: {best_ans_dist:.4f}")
     print("Attack finished.")
 
-
-# Для запуска
 if __name__ == "__main__":
-    q = input("Enter the target query to attack:\n>> ")
-    asyncio.run(attack(q))
+    query = input("Enter query: ")
+    attack(query, TARGET_REFUSAL)
