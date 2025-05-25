@@ -1,3 +1,4 @@
+import os
 from sentence_transformers import SentenceTransformer
 from sentence_transformers.util import cos_sim
 import chromadb
@@ -19,7 +20,7 @@ BLOCKER_ID = "blocker_doc"  # фиксированный id для блокер�
 TARGET_REFUSAL = "I don’t know."
 
 # Частотный словарь токенов для замены (пример: a-z, пробел и знаки препинания)
-TOKEN_VOCAB = list("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ,.-?!")
+TOKEN_VOCAB = list("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ,.-?")
 
 # Для эмбеддинга и оценки сходства целевого отказа
 embedder = SentenceTransformer("intfloat/multilingual-e5-base", device="cuda")
@@ -72,14 +73,17 @@ def insert_blocker_document(doc_text: str, col_name: str):
     col.upsert(ids=[BLOCKER_ID], embeddings=[emb], metadatas=[metadata], documents=[doc_text])
 
 def create_collection_copies(num: int):
+    docs = collection.get(include=['documents', 'metadatas', 'embeddings'])
+
     copies = []
-    docs = collection.get(include=['documents', 'metadatas', 'ids'])
     for i in range(num):
-        new_collection = client.get_or_create_collection(name=str(i))
-        new_collection.add(
-            documents=docs['documents'],
+        new_collection = client.get_or_create_collection(name=f'col{i}')
+
+        new_collection.upsert(
+            ids=docs['ids'],
+            embeddings=docs['embeddings'],
             metadatas=docs['metadatas'],
-            ids=docs['ids']
+            documents=docs['documents'],
         )
         copies.append(new_collection)
 
@@ -88,7 +92,8 @@ def create_collection_copies(num: int):
 def attack(query: str, target_response: str):
     print(f"Starting attack on query:\n{query}\n")
     target_emb = embed_text(target_response)
-    collections = create_collection_copies(BATCH_SIZE)
+    #collections = create_collection_copies(BATCH_SIZE)
+    collections = [client.get_or_create_collection(name=f"col{i}") for i in range(BATCH_SIZE)]
     queries = [query]*BATCH_SIZE
 
     # Инициализация блокера: d̃r = query, d̃j = '!' * N_TOKENS
@@ -104,7 +109,7 @@ def attack(query: str, target_response: str):
         for j in range(BATCH_SIZE):
             d_j[j][pos] = tokens[j]
             blocker = build_blocker_text(d_r, d_j[j])
-            insert_blocker_document(blocker, str(j))
+            insert_blocker_document(blocker, 'col'+str(j))
 
         answers, _ = interactive_rag.handle_multiple_queries(
             queries, collections)
@@ -132,5 +137,5 @@ def attack(query: str, target_response: str):
     print("Attack finished.")
 
 if __name__ == "__main__":
-    query = input("Enter query: ")
+    query = 'What is an AI?'
     attack(query, TARGET_REFUSAL)

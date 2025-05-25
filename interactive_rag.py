@@ -3,8 +3,9 @@ import asyncio, os, json, time
 import chromadb
 from sentence_transformers import SentenceTransformer, CrossEncoder
 import httpx
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage
 from langchain_gigachat.chat_models import GigaChat
+from dotenv import load_dotenv
 
 DB_DIR        = "data/chroma"
 COLLECTION    = "pdf_documents"
@@ -23,7 +24,8 @@ reranker      = CrossEncoder(RERANK_MODEL, device="cuda")
 
 use_gigachat = True
 if use_gigachat:
-    giga_api = os.environ.get('Giga_api')
+    load_dotenv()
+    giga_api = os.getenv('Giga_api')
     giga = GigaChat(credentials=giga_api,
                     verify_ssl_certs=False)
 
@@ -92,11 +94,11 @@ def handle_multiple_queries(queries: list[str], documents: list[collection]) \
             f"### Documents:\n{ctx}\n\n"
             f"### Question:\n{query}\n\n### Your answer:"
         )
-        messages.append(prompt)
+        messages.append([SystemMessage(prompt)])
         ctxs.append(ctx)
 
     responses = giga.generate(messages)
-    answers = [response.choices[0].message.content for response in responses]
+    answers = [response[0].message.content for response in responses.generations]
 
     return [(answers[i], ctxs[i]) for i in range(len(ctxs))]
 
