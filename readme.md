@@ -16,12 +16,23 @@
 
 ``rag-env\Scripts\activate``
 
-2. Установить модель согласно [гайду](https://github.com/abetlen/llama-cpp-python/issues/1963)
+2. Установить llama-cpp-python:
+
+- ``set CMAKE_ARGS="-DGGML_CUDA=on"``
+- ``pip install llama-cpp-python``
 
 3. Установить Pytorch:
 
-``pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu126``
+``pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu126``
 
 4. Установить оставшиеся зависимости:
 
 ``pip install -r ./requirements.txt``
+
+5. Установить langchain: ``pip install -U langchain-community``
+
+5. Скачать модель: ``python download_model.py``
+
+6. Скачать примеры pdf для построения БД: ``python download_pdfs.py``
+
+7. Постройте БД: ``python index_pdfs.py``

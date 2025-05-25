@@ -6,3 +6,4 @@ tqdm
 arxiv
 fastapi
 uvicorn
+huggingface_hub
