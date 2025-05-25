@@ -1,4 +1,3 @@
-import os
 from sentence_transformers import SentenceTransformer
 from sentence_transformers.util import cos_sim
 import chromadb
@@ -17,7 +16,8 @@ TARGET_SIM = 0.95 # Насколько близкий ответ считаем 
 BLOCKER_ID = "blocker_doc"  # фиксированный id для блокера
 
 # Целевая фраза отказа (ее будем оптимизировать)
-TARGET_REFUSAL = "I don’t know."
+TARGET_REFUSAL = "I don’t know"
+ALTERNATIVE_REFUSAL = ["I'm sorry", 'no explicit information', 'do not provide']
 
 # Частотный словарь токенов для замены (пример: a-z, пробел и знаки препинания)
 TOKEN_VOCAB = list("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ,.-?")
@@ -58,7 +58,7 @@ def find_best_result(candidates: list[str], target_embedding: np.ndarray) \
     -> tuple[int, str, float]:
     for i in range(len(candidates)):
         candidate = candidates[i]
-        if TARGET_REFUSAL in candidate:
+        if TARGET_REFUSAL in candidate or any(refusal in candidate for refusal in ALTERNATIVE_REFUSAL):
             return i, candidate, 1
 
     return find_most_similar(candidates, target_embedding)
@@ -111,10 +111,12 @@ def attack(query: str, target_response: str):
             blocker = build_blocker_text(d_r, d_j[j])
             insert_blocker_document(blocker, 'col'+str(j))
 
-        answers, _ = interactive_rag.handle_multiple_queries(
+        answers, docs = interactive_rag.handle_multiple_queries(
             queries, collections)
         j, best_ans, best_ans_dist = find_best_result(answers, target_emb)
-        print(f'{i} Best answer: {best_ans} with sim {best_ans_dist}.')
+        print(f'{i} Best answer: {best_ans} with sim {best_ans_dist} and document {build_blocker_text(d_r, d_j[j])}')
+        if query not in docs[j]:
+            print(f'This query did not use the blocker file!')
         best_d_j = deepcopy(d_j[j])
         d_j = [deepcopy(best_d_j) for _ in range(BATCH_SIZE)]
 

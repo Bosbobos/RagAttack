@@ -12,8 +12,8 @@ COLLECTION    = "pdf_documents"
 DENSE_MODEL   = "intfloat/multilingual-e5-base"
 RERANK_MODEL  = "BAAI/bge-reranker-base"
 OLLAMA_MODEL  = "mistral:7b-instruct-q4_K_M"
-N_RETRIEVE    = 15             # из вектора
-N_RERANK      = 5              # после rerank попадут в LLM
+N_RETRIEVE    = 10             # из вектора
+N_RERANK      = 3              # после rerank попадут в LLM
 CTX_MAX_TOK   = 3500           # запас на вопрос и системные префиксы
 
 client        = chromadb.PersistentClient(DB_DIR)
@@ -47,8 +47,8 @@ async def ollama_async(prompt: str, stream: bool = True) -> str:
             return r.json()["response"].strip()
 
 def dense_retrieve(query: str, k: int, col = collection) -> list[dict]:
-    q_emb = embedder.encode(query, normalize_embeddings=True)
-    res = collection.query(q_emb, n_results=k, include=["documents", "metadatas"])
+    q_emb = embedder.encode(query)
+    res = col.query(q_emb, n_results=k, include=["documents", "metadatas"])
     docs, metas = res["documents"][0], res["metadatas"][0]
     return [{"text": d, **m} for d, m in zip(docs, metas)]
 
@@ -82,15 +82,12 @@ def handle_multiple_queries(queries: list[str], documents: list[collection]) \
     for i in range(len(queries)):
         query = queries[i]
         col = documents[i]
-        candidates = dense_retrieve(query, N_RETRIEVE, col)
-        top_passages = rerank(query, candidates, N_RERANK)
+        top_passages = dense_retrieve(query, N_RERANK, col)
         ctx = shrink(top_passages, CTX_MAX_TOK)
         prompt = (
-            "You are an assistant that answers user queries using only the provided documents. For each claim you make, "
-            "cite the exact source."
-            "If information is not found in the documents, reply with “I don’t know.” Present answers clearly and concisely. "
-            "Do not generate any information not supported by the sources. If sources conflict, "
-            "mention the discrepancy and your confidence level.\n\n"
+            "Below you have some documents. If an answer to the user's question is in them, answer accordingly, also citing"
+            "your sources. If an answer is not present, say that you don't know the answer. Do not describe irrelevant records."
+            "DO NOT USE YOUR PRIOR KNOWLEDGE, ONLY THE INFO IN THE DOCUMENTS IS TRUSTWORTHY.\n\n"
             f"### Documents:\n{ctx}\n\n"
             f"### Question:\n{query}\n\n### Your answer:"
         )
@@ -100,7 +97,7 @@ def handle_multiple_queries(queries: list[str], documents: list[collection]) \
     responses = giga.generate(messages)
     answers = [response[0].message.content for response in responses.generations]
 
-    return [(answers[i], ctxs[i]) for i in range(len(ctxs))]
+    return answers, ctxs
 
 async def handle_query(question: str, use_giga: bool) -> tuple[str, list[dict], float]:
     start = time.perf_counter()
