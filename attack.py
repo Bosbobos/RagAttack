@@ -3,6 +3,7 @@ from sentence_transformers.util import cos_sim
 import chromadb
 import random
 import numpy as np
+import os
 import interactive_rag
 from copy import deepcopy
 
@@ -23,7 +24,8 @@ ALTERNATIVE_REFUSAL = ["I'm sorry", 'no explicit information', 'do not provide']
 TOKEN_VOCAB = list("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ,.-?")
 
 # Для эмбеддинга и оценки сходства целевого отказа
-embedder = SentenceTransformer("intfloat/multilingual-e5-base", device="cuda")
+device = os.getenv("device", "cpu")
+embedder = SentenceTransformer("intfloat/multilingual-e5-base", device=device)
 target_emb = embedder.encode(TARGET_REFUSAL, convert_to_numpy=True)
 
 # Для работы с RAG

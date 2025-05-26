@@ -13,15 +13,16 @@ OLLAMA_MODEL  = "mistral:7b-instruct-q4_K_M"
 N_RERANK      = 5              # сколько файлов берется из БД
 CTX_MAX_TOK   = 3500           # запас на вопрос и системные префиксы
 
-client        = chromadb.PersistentClient(DB_DIR)
-collection    = client.get_collection(COLLECTION)
-
-embedder      = SentenceTransformer(DENSE_MODEL, device="cuda")
-
 load_dotenv()
 giga_api = os.getenv('Giga_api')
 giga = GigaChat(credentials=giga_api,
                 verify_ssl_certs=False)
+
+client        = chromadb.PersistentClient(DB_DIR)
+collection    = client.get_collection(COLLECTION)
+
+device = os.getenv('device', 'cpu')
+embedder      = SentenceTransformer(DENSE_MODEL, device=device)
 
 # ---------- вспомогательные функции ----------
 

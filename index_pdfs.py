@@ -5,12 +5,14 @@ from sentence_transformers import SentenceTransformer
 import chromadb
 import tqdm
 import hashlib
+import os
 
 PDF_DIR = pathlib.Path("data/raw_pdfs")
 DB_DIR = "data/chroma"
 
 if __name__ == "__main__":
-    embedder = SentenceTransformer("intfloat/multilingual-e5-base", device="cuda")
+    device = os.getenv('device', 'cpu')
+    embedder = SentenceTransformer("intfloat/multilingual-e5-base", device=device)
 
     client = chromadb.PersistentClient(path=DB_DIR)
     collection = client.get_or_create_collection(name="pdf_documents")
