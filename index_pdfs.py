@@ -3,7 +3,6 @@ from langchain.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from sentence_transformers import SentenceTransformer
 import chromadb
-from chromadb.config import Settings
 import tqdm
 import hashlib
 

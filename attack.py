@@ -142,5 +142,5 @@ def attack(query: str, target_response: str):
     print("Attack finished.")
 
 if __name__ == "__main__":
-    query = 'What is an AI?'
+    query = input('Write the query to attack: ')
     attack(query, TARGET_REFUSAL)

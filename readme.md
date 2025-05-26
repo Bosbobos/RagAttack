@@ -1,13 +1,11 @@
 # Общая информация
 В данном репозитории располагается код для повторения атаки, описанной в статье [Machine Against the RAG: Jamming Retrieval-Augmented Generation with Blocker Documents](https://arxiv.org/abs/2406.05870)
+Отчет по данной статье и пример атаки можно найти по [ссылке](https://disk.yandex.ru/d/gXKA3J_ra3_tOw)
 
 # Требования
 Данная инструкция предполагает следующие требования:
 - OS: Windows 11
 - Python: 3.11
-- CUDA Toolkit: 12.6
-
-Данное пособие предполагает наличие видеокарты NVIDIA.
 
 # Установка:
 1. Активировать окружение:
@@ -16,23 +14,14 @@
 
 ``rag-env\Scripts\activate``
 
-2. Установить llama-cpp-python:
-
-- ``set CMAKE_ARGS="-DGGML_CUDA=on"``
-- ``pip install llama-cpp-python``
-
-3. Установить Pytorch:
-
-``pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu126``
-
-4. Установить оставшиеся зависимости:
+2. Установить зависимости:
 
 ``pip install -r ./requirements.txt``
 
-5. Установить langchain: ``pip install -U langchain-community``
+3. Скачать примеры pdf для построения БД: ``python download_pdfs.py``
 
-5. Скачать модель: ``python download_model.py``
+4. Построить БД: ``python index_pdfs.py``
 
-6. Скачать примеры pdf для построения БД: ``python download_pdfs.py``
+5. Создать .env файл и в переменную Giga_api положить api-ключ GigaChat (в будущем будет добавлена поддержка других API-провайдеров)
 
-7. Постройте БД: ``python index_pdfs.py``
+6. Запустить файл атаки ``python attack.py``

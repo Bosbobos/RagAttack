@@ -1,9 +1,8 @@
 chromadb
-langchain
-pypdf
-sentence_transformers
+numpy
+sentence-transformers
 tqdm
+langchain
 arxiv
-fastapi
-uvicorn
-huggingface_hub
+langchain-core
+python-dotenv
