@@ -13,7 +13,7 @@ DENSE_MODEL   = "intfloat/multilingual-e5-base"
 RERANK_MODEL  = "BAAI/bge-reranker-base"
 OLLAMA_MODEL  = "mistral:7b-instruct-q4_K_M"
 N_RETRIEVE    = 10             # из вектора
-N_RERANK      = 3              # после rerank попадут в LLM
+N_RERANK      = 5              # после rerank попадут в LLM
 CTX_MAX_TOK   = 3500           # запас на вопрос и системные префиксы
 
 client        = chromadb.PersistentClient(DB_DIR)
@@ -111,8 +111,7 @@ async def handle_query(question: str, use_giga: bool) -> tuple[str, list[dict], 
         "You are an assistant that answers user queries using only the provided documents. For each claim you make, "
         "cite the exact source."
         "If information is not found in the documents, reply with “I don’t know.” Present answers clearly and concisely. "
-        "Do not generate any information not supported by the sources. If sources conflict, "
-        "mention the discrepancy and your confidence level.\n\n"
+        "Do not generate any information not supported by the sources.\n\n"
         f"### Documents:\n{ctx}\n\n"
         f"### Question:\n{question}\n\n### Your answer:"
     )

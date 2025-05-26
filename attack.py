@@ -92,8 +92,11 @@ def create_collection_copies(num: int):
 def attack(query: str, target_response: str):
     print(f"Starting attack on query:\n{query}\n")
     target_emb = embed_text(target_response)
-    #collections = create_collection_copies(BATCH_SIZE)
-    collections = [client.get_or_create_collection(name=f"col{i}") for i in range(BATCH_SIZE)]
+    try:
+        collections = [client.get_collection(name=f"col{i}") for i in range(BATCH_SIZE)]
+    except ValueError:
+        collections = create_collection_copies(BATCH_SIZE)
+
     queries = [query]*BATCH_SIZE
 
     # Инициализация блокера: d̃r = query, d̃j = '!' * N_TOKENS
